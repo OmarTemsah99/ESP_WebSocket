@@ -1,4 +1,6 @@
 #include "sensor_manager.h"
+#include <vector>
+#include <algorithm>
 
 void SensorManager::updateSensorData(const String &senderIP, const String &clientId, int sensorValue)
 {
@@ -45,50 +47,45 @@ bool SensorManager::hasSensorData() const
 
 String SensorManager::getFormattedSensorData() const
 {
-    String result = "TP:";
-    bool first = true;
-
-    for (const auto &pair : sensorDataMap)
-    {
-        if (!first)
-        {
-            result += ",";
-        }
-        result += String(pair.second.value);
-        first = false;
-    }
-
-    return result;
+    return getFormattedSensorData(0); // Call the parameterized version
 }
 
 String SensorManager::getFormattedSensorData(int minSensors) const
 {
-    String result = "TP:";
-    bool first = true;
-    int sensorCount = 0;
-
-    // Add actual sensor values
+    // Find the maximum client ID
+    int maxId = -1;
     for (const auto &pair : sensorDataMap)
     {
-        if (!first)
-        {
-            result += ",";
-        }
-        result += String(pair.second.value);
-        first = false;
-        sensorCount++;
+        int id = pair.second.clientId.toInt();
+        if (id > maxId)
+            maxId = id;
     }
 
-    // Pad with zeros if we have fewer sensors than minSensors
-    while (sensorCount < minSensors)
+    // Determine the actual number of slots needed
+    int numSlots = (minSensors > (maxId + 1)) ? minSensors : (maxId + 1);
+    if (numSlots == 0)
+        return "TP:"; // Handle no sensors case
+
+    // Create a vector to hold values in their correct positions
+    std::vector<int> values(numSlots, 0);
+
+    // Fill the vector with sensor values at their correct positions
+    for (const auto &pair : sensorDataMap)
     {
-        if (!first)
+        int id = pair.second.clientId.toInt();
+        if (id >= 0 && id < numSlots)
         {
-            result += ",";
+            values[id] = pair.second.value;
         }
-        result += "0";
-        first = false;
-        sensorCount++;
+    }
+
+    // Build the result string
+    String result = "TP:";
+    for (int i = 0; i < numSlots; i++)
+    {
+        if (i > 0)
+            result += ",";
+        result += String(values[i]);
     }
 
     return result;
