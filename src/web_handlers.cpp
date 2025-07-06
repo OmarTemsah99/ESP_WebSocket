@@ -58,11 +58,16 @@ void WebHandlers::handleRoot()
 // Process sensor POST request
 void WebHandlers::handleSensorData()
 {
+    int touchValue = server->arg("touch").toInt();
+    float batteryVoltage = server->arg("batteryVoltage").toFloat();
+    float batteryPercent = server->arg("batteryPercent").toFloat();
     sensorManager->updateSensorData(
         server->client().remoteIP().toString(),
         server->arg("clientId"),
-        server->arg("value").toInt());
-    ledController->setSensorIndicator(server->arg("value").toInt());
+        touchValue,
+        batteryVoltage,
+        batteryPercent);
+    ledController->setSensorIndicator(touchValue);
     server->send(200, "text/plain", "OK");
 }
 
