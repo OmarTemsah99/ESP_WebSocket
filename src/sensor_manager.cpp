@@ -2,9 +2,9 @@
 #include <vector>
 #include <algorithm>
 
-void SensorManager::updateSensorData(const String &senderIP, const String &clientId, int sensorValue)
+void SensorManager::updateSensorData(const String &senderIP, const String &clientId, int touchValue, float batteryVoltage, float batteryPercent)
 {
-    sensorDataMap[senderIP] = {clientId, sensorValue};
+    sensorDataMap[senderIP] = {clientId, touchValue, batteryVoltage, batteryPercent};
     // Serial.printf("Sensor update from %s: clientId=%s, value=%d\n", senderIP.c_str(), clientId.c_str(), sensorValue);
 }
 
@@ -12,21 +12,19 @@ String SensorManager::getSensorDataJSON() const
 {
     String json = "{";
     bool first = true;
-
     for (const auto &pair : sensorDataMap)
     {
         if (!first)
-        {
             json += ",";
-        }
         json += "\"" + pair.first + "\":{";
         json += "\"clientId\":\"" + pair.second.clientId + "\",";
-        json += "\"value\":" + String(pair.second.value);
+        json += "\"touch\":" + String(pair.second.touchValue) + ",";
+        json += "\"batteryVoltage\":" + String(pair.second.batteryVoltage, 2) + ",";
+        json += "\"batteryPercent\":" + String(pair.second.batteryPercent, 1);
         json += "}";
         first = false;
     }
     json += "}";
-
     return json;
 }
 
@@ -75,7 +73,7 @@ String SensorManager::getFormattedSensorData(int minSensors) const
         int id = pair.second.clientId.toInt();
         if (id >= 0 && id < numSlots)
         {
-            values[id] = pair.second.value;
+            values[id] = pair.second.touchValue;
         }
     }
 

@@ -22,11 +22,21 @@
                 div.innerHTML = `
                   <strong>IP Address:</strong> ${ip}<br>
                   <strong>Client ID:</strong> ${sensorInfo.clientId || ""}<br>
-                  <strong>Sensor Value:</strong> ${
-                    typeof sensorInfo.value !== "undefined"
-                      ? sensorInfo.value
+                  <strong>Touch Value:</strong> ${
+                    typeof sensorInfo.touch !== "undefined"
+                      ? sensorInfo.touch
                       : ""
                   }<br>
+                  <strong>Battery Voltage:</strong> ${
+                    typeof sensorInfo.batteryVoltage !== "undefined"
+                      ? sensorInfo.batteryVoltage
+                      : ""
+                  } V<br>
+                  <strong>Battery %:</strong> ${
+                    typeof sensorInfo.batteryPercent !== "undefined"
+                      ? sensorInfo.batteryPercent
+                      : ""
+                  }%<br>
                 `;
                 container.appendChild(div);
               }
