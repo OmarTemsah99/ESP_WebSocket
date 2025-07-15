@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include <WebServer.h>
+#include <ESPAsyncWebServer.h>
 
 // Project headers
 #include "config.h"
@@ -12,7 +12,7 @@
 // Global objects
 LEDController ledController;
 SensorManager sensorManager;
-WebServer server(WEB_SERVER_PORT);
+AsyncWebServer server(WEB_SERVER_PORT);
 WebHandlers webHandlers(&server, &sensorManager, &ledController);
 WiFiManager wifiManager(&ledController);
 
@@ -23,7 +23,7 @@ void setup()
 {
   // Initialize Serial for debugging
   Serial.begin(115200);
-  Serial.println("\n\nESP32-S3 NeoPixel Web Server Starting...");
+  Serial.println("\n\nESP32-S3 NeoPixel Async Web Server Starting...");
 
   // Initialize LED controller first for status indication
   ledController.init();
@@ -46,7 +46,7 @@ void setup()
     // Setup web server routes
     webHandlers.setupRoutes();
     server.begin();
-    Serial.println("HTTP server started");
+    Serial.println("HTTP async server started");
     Serial.println("Setup completed successfully!");
   }
   else
@@ -62,11 +62,7 @@ void loop()
   // Handle WiFi connection and OTA
   wifiManager.handleConnection();
 
-  // Handle web server requests only if connected
-  if (wifiManager.isConnected())
-  {
-    server.handleClient();
-  }
+  // Note: AsyncWebServer handles requests automatically, no need to call handleClient()
 
   if (currentMilis - lastSensorDataPrint >= printInterval)
   {

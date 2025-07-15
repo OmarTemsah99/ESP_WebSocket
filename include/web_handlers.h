@@ -1,7 +1,7 @@
 #ifndef WEB_HANDLERS_H
 #define WEB_HANDLERS_H
 
-#include <WebServer.h>
+#include <ESPAsyncWebServer.h>
 #include <SPIFFS.h>
 #include "sensor_manager.h"
 #include "led_controller.h"
@@ -9,28 +9,27 @@
 class WebHandlers
 {
 private:
-    WebServer *server;
+    AsyncWebServer *server;
     SensorManager *sensorManager;
     LEDController *ledController;
 
     String getContentType(String filename);
-    void sendFileInChunks(File &file, String filename);
-    void handleStaticFile();
+    void handleStaticFile(AsyncWebServerRequest *request);
 
 public:
-    WebHandlers(WebServer *webServer, SensorManager *sensorMgr, LEDController *ledCtrl);
+    WebHandlers(AsyncWebServer *webServer, SensorManager *sensorMgr, LEDController *ledCtrl);
 
-    void handleRoot();
-    void handleSensorData();
-    void handleGetSensorData();
-    void handleColor();
-    void handleFileUpload();
-    void handleUpload();
-    void handleDeleteFile();
-    void handleListFiles();
-    void handleFirmware();
-    void handleFirmwareUpdate();
-    void handleSensorDataPage(); // Serve the dedicated sensor data page
+    void handleRoot(AsyncWebServerRequest *request);
+    void handleSensorData(AsyncWebServerRequest *request);
+    void handleGetSensorData(AsyncWebServerRequest *request);
+    void handleColor(AsyncWebServerRequest *request);
+    void handleFileUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
+    void handleUpload(AsyncWebServerRequest *request);
+    void handleDeleteFile(AsyncWebServerRequest *request);
+    void handleListFiles(AsyncWebServerRequest *request);
+    void handleFirmware(AsyncWebServerRequest *request);
+    void handleFirmwareUpdate(AsyncWebServerRequest *request);
+    void handleSensorDataPage(AsyncWebServerRequest *request);
     void setupRoutes();
 };
 

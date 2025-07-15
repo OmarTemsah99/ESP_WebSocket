@@ -1,7 +1,7 @@
 #include "web_handlers.h"
 #include <Update.h>
 
-WebHandlers::WebHandlers(WebServer *webServer, SensorManager *sensorMgr, LEDController *ledCtrl)
+WebHandlers::WebHandlers(AsyncWebServer *webServer, SensorManager *sensorMgr, LEDController *ledCtrl)
     : server(webServer), sensorManager(sensorMgr), ledController(ledCtrl) {}
 
 // Determine MIME type based on file extension
@@ -18,139 +18,147 @@ String WebHandlers::getContentType(String filename)
     return "text/plain";
 }
 
-// Stream file in chunks to client
-void WebHandlers::sendFileInChunks(File &file, String filename)
-{
-    const size_t bufSize = 1024;
-    uint8_t buf[bufSize];
-    size_t totalSent = 0;
-    size_t fileSize = file.size();
-    server->sendHeader("Content-Length", String(fileSize));
-    server->setContentLength(fileSize);
-    server->send(200, getContentType(filename), "");
-
-    while (totalSent < fileSize)
-    {
-        size_t toRead = min(bufSize, fileSize - totalSent);
-        size_t bytesRead = file.read(buf, toRead);
-        if (bytesRead == 0)
-            break;
-        server->sendContent((char *)buf, bytesRead);
-        totalSent += bytesRead;
-    }
-    Serial.printf("File sent: %s (%d bytes)\n", filename.c_str(), totalSent);
-}
-
 // Serve index.html
-void WebHandlers::handleRoot()
+void WebHandlers::handleRoot(AsyncWebServerRequest *request)
 {
-    File file = SPIFFS.open("/index.html", "r");
-    if (!file || file.size() == 0)
+    if (SPIFFS.exists("/index.html"))
     {
-        Serial.println("Error: index.html missing or empty");
-        server->send(500, "text/plain", "index.html missing or empty");
-        return;
+        request->send(SPIFFS, "/index.html", "text/html");
     }
-    sendFileInChunks(file, "/index.html");
-    file.close();
+    else
+    {
+        Serial.println("Error: index.html missing");
+        request->send(500, "text/plain", "index.html missing or empty");
+    }
 }
 
 // Process sensor POST request
-void WebHandlers::handleSensorData()
+void WebHandlers::handleSensorData(AsyncWebServerRequest *request)
 {
-    int touchValue = server->arg("touch").toInt();
-    float batteryVoltage = server->arg("batteryVoltage").toFloat();
-    float batteryPercent = server->arg("batteryPercent").toFloat();
+    int touchValue = 0;
+    float batteryVoltage = 0.0;
+    float batteryPercent = 0.0;
+    String clientId = "";
+
+    if (request->hasParam("touch", true))
+        touchValue = request->getParam("touch", true)->value().toInt();
+    if (request->hasParam("batteryVoltage", true))
+        batteryVoltage = request->getParam("batteryVoltage", true)->value().toFloat();
+    if (request->hasParam("batteryPercent", true))
+        batteryPercent = request->getParam("batteryPercent", true)->value().toFloat();
+    if (request->hasParam("clientId", true))
+        clientId = request->getParam("clientId", true)->value();
+
     sensorManager->updateSensorData(
-        server->client().remoteIP().toString(),
-        server->arg("clientId"),
+        request->client()->remoteIP().toString(),
+        clientId,
         touchValue,
         batteryVoltage,
         batteryPercent);
+
     ledController->setSensorIndicator(touchValue);
-    server->send(200, "text/plain", "OK");
+    request->send(200, "text/plain", "OK");
 }
 
 // Return sensor data in JSON
-void WebHandlers::handleGetSensorData()
+void WebHandlers::handleGetSensorData(AsyncWebServerRequest *request)
 {
-    server->send(200, "application/json", sensorManager->getSensorDataJSON());
+    request->send(200, "application/json", sensorManager->getSensorDataJSON());
 }
 
 // Control LED color
-void WebHandlers::handleColor()
+void WebHandlers::handleColor(AsyncWebServerRequest *request)
 {
-    ledController->setColor(
-        server->arg("r").toInt(),
-        server->arg("g").toInt(),
-        server->arg("b").toInt());
-    server->send(200, "text/plain", "OK");
+    int r = 0, g = 0, b = 0;
+
+    if (request->hasParam("r"))
+        r = request->getParam("r")->value().toInt();
+    if (request->hasParam("g"))
+        g = request->getParam("g")->value().toInt();
+    if (request->hasParam("b"))
+        b = request->getParam("b")->value().toInt();
+
+    ledController->setColor(r, g, b);
+    request->send(200, "text/plain", "OK");
 }
 
 // Serve file manager UI
-void WebHandlers::handleUpload()
+void WebHandlers::handleUpload(AsyncWebServerRequest *request)
 {
-    File file = SPIFFS.open("/file_manager.html", "r");
-    if (!file || file.size() == 0)
+    if (SPIFFS.exists("/file_manager.html"))
     {
-        Serial.println("Error: file_manager.html missing or empty");
-        server->send(500, "text/plain", "file_manager.html missing or empty");
-        return;
+        request->send(SPIFFS, "/file_manager.html", "text/html");
     }
-    sendFileInChunks(file, "/file_manager.html");
-    file.close();
+    else
+    {
+        Serial.println("Error: file_manager.html missing");
+        request->send(500, "text/plain", "file_manager.html missing or empty");
+    }
 }
 
 // Upload file handler
-void WebHandlers::handleFileUpload()
+void WebHandlers::handleFileUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final)
 {
-    HTTPUpload &upload = server->upload();
-    static File fsUploadFile;
+    static File uploadFile;
 
-    if (upload.status == UPLOAD_FILE_START)
+    if (!index)
     {
-        String filename = "/" + upload.filename;
-        if (!filename.endsWith(".html") && !filename.endsWith(".css") && !filename.endsWith(".js") && !filename.endsWith(".bin"))
+        Serial.printf("UploadStart: %s\n", filename.c_str());
+
+        // Check file extension
+        if (!filename.endsWith(".html") && !filename.endsWith(".css") &&
+            !filename.endsWith(".js") && !filename.endsWith(".bin"))
         {
-            server->send(400, "application/json", "{\"success\":false,\"message\":\"Invalid file type\"}");
+            Serial.println("Invalid file type");
             return;
         }
-        fsUploadFile = SPIFFS.open(filename, "w");
+
+        String filepath = "/" + filename;
+        uploadFile = SPIFFS.open(filepath, "w");
+        if (!uploadFile)
+        {
+            Serial.println("Failed to open file for writing");
+            return;
+        }
     }
-    else if (upload.status == UPLOAD_FILE_WRITE && fsUploadFile)
+
+    if (uploadFile)
     {
-        fsUploadFile.write(upload.buf, upload.currentSize);
+        uploadFile.write(data, len);
     }
-    else if (upload.status == UPLOAD_FILE_END && fsUploadFile)
+
+    if (final)
     {
-        fsUploadFile.close();
-        server->send(200, "application/json", "{\"success\":true,\"message\":\"Upload complete\"}");
-    }
-    else if (upload.status == UPLOAD_FILE_ABORTED)
-    {
-        fsUploadFile.close();
-        server->send(500, "application/json", "{\"success\":false,\"message\":\"Upload aborted\"}");
+        if (uploadFile)
+        {
+            uploadFile.close();
+            Serial.printf("UploadEnd: %s, %u bytes\n", filename.c_str(), index + len);
+        }
     }
 }
 
 // Delete file from SPIFFS
-void WebHandlers::handleDeleteFile()
+void WebHandlers::handleDeleteFile(AsyncWebServerRequest *request)
 {
-    String filename = server->arg("file");
+    String filename = "";
+    if (request->hasParam("file", true))
+        filename = request->getParam("file", true)->value();
+
     if (!filename.startsWith("/"))
         filename = "/" + filename;
 
     if (!SPIFFS.exists(filename))
     {
-        server->send(404, "text/plain", "File not found");
+        request->send(404, "text/plain", "File not found");
         return;
     }
+
     bool success = SPIFFS.remove(filename);
-    server->send(success ? 200 : 500, "text/plain", success ? "Deleted" : "Delete failed");
+    request->send(success ? 200 : 500, "text/plain", success ? "Deleted" : "Delete failed");
 }
 
 // List files in SPIFFS
-void WebHandlers::handleListFiles()
+void WebHandlers::handleListFiles(AsyncWebServerRequest *request)
 {
     String json = "[";
     File root = SPIFFS.open("/");
@@ -166,120 +174,147 @@ void WebHandlers::handleListFiles()
         file = root.openNextFile();
     }
     json += "]";
-    server->send(200, "application/json", json);
+    request->send(200, "application/json", json);
 }
 
 // Serve firmware update page
-void WebHandlers::handleFirmware()
+void WebHandlers::handleFirmware(AsyncWebServerRequest *request)
 {
-    File file = SPIFFS.open("/firmware_update.html", "r");
-    if (!file || file.size() == 0)
+    if (SPIFFS.exists("/firmware_update.html"))
     {
-        server->send(500, "text/plain", "firmware_update.html missing or empty");
-        return;
+        request->send(SPIFFS, "/firmware_update.html", "text/html");
     }
-    sendFileInChunks(file, "/firmware_update.html");
-    file.close();
+    else
+    {
+        request->send(500, "text/plain", "firmware_update.html missing or empty");
+    }
 }
 
 // Perform firmware update from SPIFFS file
-void WebHandlers::handleFirmwareUpdate()
+void WebHandlers::handleFirmwareUpdate(AsyncWebServerRequest *request)
 {
-    String filename = server->arg("file");
+    String filename = "";
+    if (request->hasParam("file", true))
+        filename = request->getParam("file", true)->value();
+
     if (!filename.startsWith("/"))
         filename = "/" + filename;
     if (!filename.endsWith(".bin"))
     {
-        server->send(400, "text/plain", "Only .bin files allowed");
+        request->send(400, "text/plain", "Only .bin files allowed");
         return;
     }
+
     File firmware = SPIFFS.open(filename, "r");
     if (!firmware)
     {
-        server->send(404, "text/plain", "Firmware file not found");
+        request->send(404, "text/plain", "Firmware file not found");
         return;
     }
+
     if (!Update.begin(firmware.size()))
     {
-        server->send(500, "text/plain", "Update begin failed");
+        request->send(500, "text/plain", "Update begin failed");
+        firmware.close();
         return;
     }
+
     if (Update.writeStream(firmware) != firmware.size())
     {
-        server->send(500, "text/plain", "Write failed");
+        request->send(500, "text/plain", "Write failed");
+        firmware.close();
         return;
     }
+
     if (!Update.end(true))
     {
-        server->send(500, "text/plain", Update.errorString());
+        request->send(500, "text/plain", Update.errorString());
+        firmware.close();
         return;
     }
+
     firmware.close();
-    server->send(200, "text/plain", "Update successful. Rebooting...");
+    request->send(200, "text/plain", "Update successful. Rebooting...");
     delay(1000);
     ESP.restart();
 }
 
 // Serve sensor data page
-void WebHandlers::handleSensorDataPage()
+void WebHandlers::handleSensorDataPage(AsyncWebServerRequest *request)
 {
-    File file = SPIFFS.open("/sensor_data.html", "r");
-    if (!file || file.size() == 0)
+    if (SPIFFS.exists("/sensor_data.html"))
     {
-        server->send(500, "text/plain", "sensor_data.html missing or empty");
-        return;
+        request->send(SPIFFS, "/sensor_data.html", "text/html");
     }
-    sendFileInChunks(file, "/sensor_data.html");
-    file.close();
+    else
+    {
+        request->send(500, "text/plain", "sensor_data.html missing or empty");
+    }
 }
 
 // Serve static files (CSS/JS/HTML fallback)
-void WebHandlers::handleStaticFile()
+void WebHandlers::handleStaticFile(AsyncWebServerRequest *request)
 {
-    String path = server->uri();
-    File file = SPIFFS.open(path, "r");
-    if (!file)
+    String path = request->url();
+    if (SPIFFS.exists(path))
     {
-        server->send(404, "text/plain", "File not found");
-        return;
+        request->send(SPIFFS, path, getContentType(path));
     }
-    sendFileInChunks(file, path);
-    file.close();
+    else
+    {
+        request->send(404, "text/plain", "File not found");
+    }
 }
 
 // Define all routes
 void WebHandlers::setupRoutes()
 {
-    server->on("/", HTTP_GET, [this]()
-               { handleRoot(); });
-    server->on("/sensor", HTTP_POST, [this]()
-               { handleSensorData(); });
-    server->on("/sensorData", HTTP_GET, [this]()
-               { handleGetSensorData(); });
-    server->on("/color", HTTP_GET, [this]()
-               { handleColor(); });
-    server->on("/upload", HTTP_GET, [this]()
-               { handleUpload(); });
-    server->on("/upload", HTTP_POST, []() {}, [this]()
-               { handleFileUpload(); });
-    server->on("/delete", HTTP_POST, [this]()
-               { handleDeleteFile(); });
-    server->on("/list", HTTP_GET, [this]()
-               { handleListFiles(); });
-    server->on("/firmware", HTTP_GET, [this]()
-               { handleFirmware(); });
-    server->on("/firmwareUpdate", HTTP_POST, [this]()
-               { handleFirmwareUpdate(); });
-    server->on("/sensorpage", HTTP_GET, [this]()
-               { handleSensorDataPage(); });
+    // Root route
+    server->on("/", HTTP_GET, [this](AsyncWebServerRequest *request)
+               { handleRoot(request); });
 
-    // Fallback static handler
-    server->onNotFound([this]()
+    // Sensor routes
+    server->on("/sensor", HTTP_POST, [this](AsyncWebServerRequest *request)
+               { handleSensorData(request); });
+
+    server->on("/sensorData", HTTP_GET, [this](AsyncWebServerRequest *request)
+               { handleGetSensorData(request); });
+
+    server->on("/sensorpage", HTTP_GET, [this](AsyncWebServerRequest *request)
+               { handleSensorDataPage(request); });
+
+    // LED control
+    server->on("/color", HTTP_GET, [this](AsyncWebServerRequest *request)
+               { handleColor(request); });
+
+    // File management routes
+    server->on("/upload", HTTP_GET, [this](AsyncWebServerRequest *request)
+               { handleUpload(request); });
+
+    server->on("/upload", HTTP_POST, [](AsyncWebServerRequest *request)
+               { request->send(200, "application/json", "{\"success\":true,\"message\":\"Upload complete\"}"); }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final)
+               { handleFileUpload(request, filename, index, data, len, final); });
+
+    server->on("/delete", HTTP_POST, [this](AsyncWebServerRequest *request)
+               { handleDeleteFile(request); });
+
+    server->on("/list", HTTP_GET, [this](AsyncWebServerRequest *request)
+               { handleListFiles(request); });
+
+    // Firmware update routes
+    server->on("/firmware", HTTP_GET, [this](AsyncWebServerRequest *request)
+               { handleFirmware(request); });
+
+    server->on("/firmwareUpdate", HTTP_POST, [this](AsyncWebServerRequest *request)
+               { handleFirmwareUpdate(request); });
+
+    // Static file handler for CSS, JS, HTML files
+    server->onNotFound([this](AsyncWebServerRequest *request)
                        {
-        String path = server->uri();
+        String path = request->url();
         if (path.endsWith(".html") || path.endsWith(".css") || path.endsWith(".js")) {
-            handleStaticFile();
+            handleStaticFile(request);
         } else {
-            server->send(404, "text/plain", "Not found");
+            request->send(404, "text/plain", "Not found");
         } });
 }
